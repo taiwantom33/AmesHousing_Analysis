@@ -1,0 +1,297 @@
+---
+title: "Data Analysis - Ames House Prices"
+author: "Ian Vetter"
+date: "2023-07-20"
+output: html_document
+---
+
+# The Dataset
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+
+```{r}
+#Splitting Test and Train data
+ames_trn_idx  = sample(nrow(housing_data), size = trunc(0.80 * nrow(housing_data)))
+ames_trn_data = housing_data[ames_trn_idx, ]
+ames_tst_data = housing_data[-ames_trn_idx, ]
+```
+
+
+
+
+```{r}
+library(faraway)
+library(dplyr)
+library(psych)
+library(corrplot)
+library(ggplot2)
+library(ggcorrplot)
+library(lares)
+library(reshape2)
+
+housing_data = read.csv("AmesHousing.csv")
+
+summary(housing_data)
+
+nrow(housing_data)
+ncol(housing_data)
+
+# Using small chunk of dataset for quick testing :)
+
+#housing_data = housing_data[1:100,]
+
+# Coercing categorical predictors into factor variables
+
+housing_data[is.na(housing_data)] = 1
+
+for (i in 1:ncol(housing_data)) {
+  if (typeof(housing_data[, i]) == "character") {
+    if (length(unique(housing_data[, i])) >= 2) {
+      housing_data[, i] = as.factor(housing_data[, i])
+    }
+    
+  }
+}
+
+#str(housing_data)
+```
+
+First few examples:
+
+```{r}
+housing_data$SalePrice[1:10]
+housing_data$Lot.Area[1:10]
+housing_data$Utilities[1:10]
+```
+
+
+# Collinearity and correlation analysis
+
+
+```{r}
+
+# Subsetting all the numeric elements of the dataset for collinearity and correlation analysis:
+
+n_idxs = unlist(lapply(housing_data, is.numeric), use.names = FALSE)  
+numeric_housing_data = housing_data[, n_idxs]
+
+#str(numeric_housing_data)
+
+
+
+# MUST specify use = "complete.obs" argument to ignore NA's in dataset
+corrs = round(cor(numeric_housing_data, use="complete.obs"), 2)
+
+
+# some possible correlation plots?
+
+#corrplot(corrs, method="number")
+#ggcorrplot(corrs, lab_size = 0.1)
+
+#corrs
+
+ggplot(melt(corrs), aes(Var1, Var2, fill=value)) +
+  geom_tile(height=0.9, width=0.9) +
+  scale_fill_gradient2(low="blue", mid="white", high="red") +
+  theme_minimal() +
+  coord_equal() +
+  labs(x="",y="",fill="Corr") +
+  theme(axis.text.x=element_text(size=5, angle=45, vjust=1, hjust=1, 
+                                 margin=margin(-3,0,0,0)),
+        axis.text.y=element_text(size=5, margin=margin(0,-3,0,0)),
+        panel.grid.major=element_blank()) 
+
+```
+
+Taking a closer look at some of the most correlated predictors:
+
+```{r}
+
+corr_cross(numeric_housing_data,
+  max_pvalue = 0.05,
+  top = 15 
+)
+
+# A few of these further visualized in pairs:
+
+corr_data = numeric_housing_data[, c("Order", "Yr.Sold", "Garage.Cars", "Garage.Area", "Year.Built", "Garage.Yr.Blt", "Gr.Liv.Area", "TotRms.AbvGrd", "Overall.Qual", "Total.Bsmt.SF", "SalePrice")]
+
+pairs(corr_data, col = "dodgerblue")
+```
+
+While some of these high correlation measures are to be expected, such as house year built along garage year built, we can also see some non-trivial patterns start to emerge from the more continuous numeric predictors.
+
+
+# Basic Regression Models
+
+We'll start out with a few preliminary multiple regression models: A full additive model using all available predictors, a reduced additive model that disregards some of the predictors that exhibit collinearity or low significance, and a backwards AIC-selected model.
+
+```{r, results='hide'}
+#sapply(lapply(housing_data, unique), length)
+
+
+# lm() complains when it runs into "NA" values in dataframe, so just replacing any with 0 for now...
+
+
+full_additive = lm(SalePrice ~ ., data = housing_data)
+
+additive_lowcorr = lm(SalePrice ~ . - Gr.Liv.Area - Garage.Cars - Total.Bsmt.SF - Garage.Yr.Blt - Order - MS.Zoning - Condition.1 - House.Style - Exterior.1st - Exterior.2nd - Bsmt.Qual - Exter.Cond - Bsmt.Cond - Bsmt.Exposure - BsmtFin.Type.2 - Heating - Electrical - Garage.Type, data = housing_data)
+
+additive_aic = step(additive_lowcorr, direction = "backward",trace=0)
+
+```
+
+```{r}
+
+anova(additive_lowcorr, full_additive)
+anova(additive_aic, full_additive)
+
+```
+
+# Transformations
+
+```{r}
+par(mfrow = c(2, 2))    
+
+plot(SalePrice ~ Lot.Area, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs Lot area")
+
+plot(SalePrice ~ X1st.Flr.SF, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs First floor area")
+
+plot(SalePrice ~ X2nd.Flr.SF, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs Second floor area")
+
+plot(SalePrice ~ Garage.Area, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs Garage area")
+```
+
+```{r}
+
+par(mfrow = c(2, 2))    
+
+plot(SalePrice ~ Total.Bsmt.SF, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs Basement area")
+
+plot(SalePrice ~ Lot.Frontage, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs Lot frontage")
+
+plot(SalePrice ~ Overall.Qual, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs Overall quality")
+
+
+plot(SalePrice ~ Overall.Cond, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs Overall condition")
+```
+
+```{r}
+
+par(mfrow = c(2, 2))   
+
+plot(SalePrice ~ Gr.Liv.Area, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs Living area")
+
+plot(SalePrice ~ Full.Bath, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs # of full bathrooms")
+
+plot(SalePrice ~ MS.SubClass, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs MS Subclass")
+
+plot(SalePrice ~ Wood.Deck.SF, data = housing_data, col = "grey", pch = 20, cex = 1.5,
+     main = "Sale price vs Deck area")
+```
+
+```{r}
+#log_p1 = lm(SalePrice ~ . + log(X1st.Flr.SF) + log(Garage.Area) + log(Lot.Frontage), data=housing_data)
+
+log_r1 = lm(log(SalePrice) ~ ., data = housing_data)
+
+#summary(log_p1)
+summary(log_r1)
+```
+
+
+# Interactions
+
+```{r}
+
+#int_mod1 = lm(SalePrice ~ (.)^2, data = housing_data)
+```
+
+
+```{r}
+#Functions to evaluate models
+library(lmtest)
+
+get_bp_decision = function(model, alpha) {
+  decide = unname(bptest(model)$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+
+get_sw_decision = function(model, alpha) {
+  decide = unname(shapiro.test(resid(model))$p.value < alpha)
+  ifelse(decide, "Reject", "Fail to Reject")
+}
+
+get_num_params = function(model) {
+  length(coef(model))
+}
+
+get_loocv_rmse = function(model) {
+  sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2,na.rm=TRUE))
+}
+
+get_adj_r2 = function(model) {
+  summary(model)$adj.r.squared
+}
+```
+
+
+```{r}
+#Create BIC Forward model with Scope as full Additive
+form_add=formula(full_additive)
+start=lm(SalePrice ~ 1,data=ames_trn_data)
+n=nrow(ames_trn_data)
+bic_for_mod=step(start,direction = "forward",scope = form_add ,k=log(n),trace=0)
+```
+
+```{r}
+#Test Model Parameters
+get_loocv_rmse(bic_for_mod)
+vif(bic_for_mod)
+```
+
+
+```{r}
+#Code to take largest Cooks Distance points out of Model and model again.
+cook=cooks.distance(bic_for_mod)
+large=4/n
+cooks=cook>large
+subset=ames_trn_data[-cooks]
+funner_mod=lm(formula(bic_for_mod),data=subset)
+get_loocv_rmse(funner_mod)
+```
+```{r}
+#Code for Predicted Vs. Actual Graph
+
+library(scales)
+
+predicted = predict(funner_mod, newdata = ames_tst_data)
+n = nrow(ames_tst_data)
+error = abs(ames_tst_data$SalePrice - predicted)
+avg_per_error = ((1 / n) * (sum(error / predicted))) * 100
+avg_per_error
+plot(
+  ames_tst_data$SalePrice,
+  predicted,
+  ylab = "Predicted Price ($)",
+  xlab = "Actual Price ($)",
+  col = "blue",
+  main = "Predicted Vs Actual Prices of Ames Houses"
+)
+abline(a = 0, b = 1, lwd = 2)
+```
+
